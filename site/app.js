@@ -28,7 +28,12 @@ const state = {
 
 const configured = /^https:\/\/.+\.supabase\.co$/.test(SUPABASE_URL) && !SUPABASE_PUBLISHABLE_KEY.includes('%%');
 const supabase = configured ? createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+  auth: {
+    storageKey: 'alcob-sentinela-sst-auth-v1',
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
 }) : null;
 const db = configured ? supabase.schema('sst') : null;
 
