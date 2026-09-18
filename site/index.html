@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Gestão de inspeções e ações de Segurança do Trabalho.">
+  <meta name="theme-color" content="#0b6b58">
+  <title>Sentinela SST</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath fill='%230b6b58' d='M32 3 56 12v17c0 15-10 26-24 32C18 55 8 44 8 29V12z'/%3E%3Cpath fill='white' d='m19 31 8 8 18-19 4 4-22 23-12-12z'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div id="boot" class="boot"><div class="loader"></div><strong>Carregando Sentinela SST…</strong></div>
+
+  <section id="configError" class="center-shell hidden">
+    <div class="message-card"><div class="brand-mark">✓</div><h1>Configuração pendente</h1><p>O projeto Supabase ainda não foi conectado. Configure o arquivo <code>config.js</code> antes de publicar.</p></div>
+  </section>
+
+  <section id="auth" class="login-shell hidden">
+    <div class="login-art">
+      <div class="brand"><div class="brand-mark">✓</div><strong>Sentinela SST</strong></div>
+      <div><h1>Segurança visível.<br>Ação responsável.</h1><p>Inspeções por setor conectadas diretamente ao plano 5W2H, com dados protegidos e compartilhados em tempo real.</p></div>
+      <div class="login-points"><div><strong>Inspecione</strong><span>checklists personalizáveis</span></div><div><strong>Registre</strong><span>evidências com fotos</span></div><div><strong>Acompanhe</strong><span>prazos e responsáveis</span></div></div>
+    </div>
+    <div class="login-side">
+      <form id="loginForm" class="login-card">
+        <div class="mobile-brand brand"><div class="brand-mark">✓</div><strong>Sentinela SST</strong></div>
+        <h2>Entrar no sistema</h2><p>Use o acesso fornecido pela supervisão.</p>
+        <label class="field"><span>E-mail</span><input id="loginEmail" type="email" autocomplete="username" required placeholder="nome@empresa.com.br"></label>
+        <label class="field"><span>Senha</span><input id="loginPassword" type="password" autocomplete="current-password" required placeholder="Sua senha"></label>
+        <button id="loginButton" class="btn primary wide" type="submit">Entrar</button>
+        <p class="privacy-note">Acesso restrito ao setor de Segurança do Trabalho.</p>
+      </form>
+    </div>
+  </section>
+
+  <div id="app" class="app hidden">
+    <aside id="sidebar" class="sidebar">
+      <div class="brand"><div class="brand-mark">✓</div><strong>Sentinela SST</strong></div>
+      <nav id="nav">
+        <button class="nav-btn active" data-page="dashboard"><span>▦</span>Painel</button>
+        <button class="nav-btn" data-page="inspections"><span>◎</span>Inspeções</button>
+        <button class="nav-btn" data-page="actions"><span>☑</span>Plano 5W2H</button>
+        <button class="nav-btn" data-page="kanban"><span>▥</span>Kanban</button>
+        <button class="nav-btn" data-page="calendar"><span>□</span>Calendário</button>
+        <button class="nav-btn supervisor-only" data-page="sectors"><span>◇</span>Setores e formulários</button>
+        <button class="nav-btn supervisor-only" data-page="admin"><span>⚙</span>Administração</button>
+      </nav>
+      <div class="sidebar-foot"><div class="user-chip"><div id="avatar" class="avatar">SS</div><div><strong id="userName"></strong><span id="userRole"></span></div></div><button id="logoutBtn" class="logout">Sair</button></div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div class="top-left"><button id="menuBtn" class="icon-btn mobile-menu" aria-label="Abrir menu">☰</button><div><h1 id="topTitle">Painel de segurança</h1><span id="todayText"></span></div></div><div class="top-actions"><span id="syncState" class="sync-state">● Sincronizado</span><button class="btn accent small" data-open-inspection>+ Nova inspeção</button></div></header>
+      <div class="content">
+        <section id="page-dashboard" class="page active">
+          <div class="page-head"><div><h2>Visão geral</h2><p>Prioridades, prazos e evolução das ações.</p></div><button class="btn primary" data-open-inspection>Iniciar inspeção</button></div>
+          <div id="stats" class="stats"></div>
+          <div class="panels"><article class="panel"><div class="panel-head"><h3>Ações próximas do prazo</h3><button class="btn small" data-page-link="actions">Ver todas</button></div><div id="dueList" class="mini-list"></div></article><article class="panel"><div class="panel-head"><h3>Conclusão do plano</h3></div><div id="progressRing" class="progress-ring"><div><strong id="progressText">0%</strong><span>ações concluídas</span></div></div><p id="progressCaption" class="muted center"></p></article></div>
+        </section>
+
+        <section id="page-inspections" class="page">
+          <div class="page-head"><div><h2>Inspeções</h2><p>Histórico por setor e novos registros.</p></div><button class="btn primary" data-open-inspection>+ Nova inspeção</button></div>
+          <div class="toolbar"><input id="inspectionSearch" class="grow" placeholder="Buscar por setor, inspetor ou código"><select id="inspectionSectorFilter"><option value="">Todos os setores</option></select></div>
+          <div id="inspectionTable" class="table-wrap"></div>
+        </section>
+
+        <section id="page-actions" class="page">
+          <div class="page-head"><div><h2>Plano de ação 5W2H</h2><p>Da constatação à conclusão, com responsável e prazo.</p></div><button class="btn primary" data-new-action>+ Nova ação</button></div>
+          <div class="toolbar"><input id="actionSearch" class="grow" placeholder="Buscar ação, responsável ou setor"><select id="actionStatusFilter"><option value="">Todos os status</option><option value="a_fazer">A fazer</option><option value="em_andamento">Em andamento</option><option value="aguardando">Aguardando</option><option value="concluida">Concluída</option></select></div>
+          <div id="actionTable" class="table-wrap"></div>
+        </section>
+
+        <section id="page-kanban" class="page"><div class="page-head"><div><h2>Kanban de ações</h2><p>Arraste os cartões para atualizar o andamento.</p></div><button class="btn primary" data-new-action>+ Nova ação</button></div><div id="kanbanBoard" class="kanban"></div></section>
+
+        <section id="page-calendar" class="page"><div class="page-head"><div><h2>Calendário de prazos</h2><p>Distribuição das entregas do plano de ação.</p></div></div><div class="calendar-box"><div class="cal-head"><button id="prevMonth" class="icon-btn" aria-label="Mês anterior">‹</button><h3 id="calTitle"></h3><button id="nextMonth" class="icon-btn" aria-label="Próximo mês">›</button></div><div id="calendarGrid" class="calendar"></div></div></section>
+
+        <section id="page-sectors" class="page"><div class="page-head"><div><h2>Setores e formulários</h2><p>Cores e checklists editáveis por setor.</p></div><button id="newSectorBtn" class="btn primary">+ Adicionar setor</button></div><div id="sectorGrid" class="sector-grid"></div></section>
+
+        <section id="page-admin" class="page">
+          <div class="page-head"><div><h2>Administração</h2><p>Usuários e níveis de acesso do sistema.</p></div></div>
+          <div class="panels"><article class="panel"><div class="panel-head"><h3>Usuários</h3></div><div id="userList" class="mini-list"></div></article><article class="panel"><h3>Cadastro de acessos</h3><p class="muted">Novos usuários são convidados pelo painel do Supabase. Assim que entrarem pela primeira vez, aparecerão aqui como Técnico de Segurança; a supervisora poderá alterar o nível.</p><div class="notice">O primeiro usuário criado no projeto recebe automaticamente o nível de Supervisora de Segurança.</div></article></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div id="modalHost"></div><div id="toastHost" class="toast-host"></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
