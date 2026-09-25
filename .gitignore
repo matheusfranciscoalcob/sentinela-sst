@@ -1,4 +1,5 @@
 .branches/
 .temp/
 supabase/.temp/
+tmp/
 *.log

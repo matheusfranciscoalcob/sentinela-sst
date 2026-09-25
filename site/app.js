@@ -11,6 +11,7 @@ const fmtDate = value => value ? new Intl.DateTimeFormat('pt-BR').format(new Dat
 const roleLabel = role => role === 'supervisor' ? 'Supervisora de Segurança' : 'Técnico de Segurança';
 const statusLabel = { a_fazer: 'A fazer', em_andamento: 'Em andamento', aguardando: 'Aguardando', concluida: 'Concluída' };
 const typeLabel = { nao_conformidade: 'Não conformidade', oportunidade: 'Oportunidade de melhoria', avulsa: 'Ação avulsa' };
+const resultLabel = { conforme: 'Conforme', nao_conformidade: 'Não conformidade', oportunidade: 'Oportunidade de melhoria' };
 
 const state = {
   user: null,
@@ -71,7 +72,158 @@ async function signedUrl(path) {
 
 async function signedImages(paths = []) {
   const urls = await Promise.all(paths.map(signedUrl));
-  return urls.filter(Boolean).map(url => `<img class="thumb" src="${esc(url)}" alt="Evidência da inspeção">`).join('');
+  return urls.filter(Boolean).map((url, index) => `<button type="button" class="image-thumb" data-lightbox-src="${esc(url)}" data-lightbox-alt="Evidência ${index + 1} da inspeção" aria-label="Ampliar evidência ${index + 1}"><img class="thumb" src="${esc(url)}" alt="Evidência da inspeção"></button>`).join('');
+}
+
+function openLightbox(src, alt = 'Evidência da inspeção') {
+  $('#lightboxHost').innerHTML = `<div class="image-lightbox" role="dialog" aria-modal="true" aria-label="Visualização ampliada"><button type="button" class="lightbox-close" aria-label="Fechar imagem ampliada">×</button><img src="${esc(src)}" alt="${esc(alt)}"></div>`;
+  const close = () => { $('#lightboxHost').innerHTML = ''; document.removeEventListener('keydown', onKey); };
+  const onKey = event => { if (event.key === 'Escape') close(); };
+  $('.lightbox-close', $('#lightboxHost')).addEventListener('click', close);
+  $('.image-lightbox', $('#lightboxHost')).addEventListener('click', event => { if (event.target.classList.contains('image-lightbox')) close(); });
+  document.addEventListener('keydown', onKey);
+}
+
+function blobToJpegDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const image = new Image();
+    image.onload = () => {
+      const maxSide = 1500;
+      const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/jpeg', 0.82));
+    };
+    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Não foi possível processar uma das fotos.')); };
+    image.src = url;
+  });
+}
+
+async function photoDataUrl(path) {
+  const { data, error } = await supabase.storage.from('sst-safety-evidence').download(path);
+  if (error) throw error;
+  return blobToJpegDataUrl(data);
+}
+
+function pdfSafe(value = '') {
+  return String(value).replace(/[\u2010-\u2015]/g, '-');
+}
+
+async function exportInspectionPdf(id) {
+  const inspection = state.inspections.find(item => item.id === id);
+  if (!inspection) return;
+  const button = $(`[data-export-inspection="${id}"]`);
+  if (button) { button.disabled = true; button.textContent = 'Gerando PDF…'; }
+  try {
+    const { jsPDF } = await import('https://esm.sh/jspdf@2.5.2');
+    const doc = new jsPDF({ unit: 'mm', format: 'a4', compress: true });
+    const margin = 16;
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const usableWidth = pageWidth - margin * 2;
+    const sector = inspection.sectors?.name || sectorById(inspection.sector_id).name;
+    let y = 18;
+
+    const ensureSpace = needed => {
+      if (y + needed <= pageHeight - 12) return;
+      doc.addPage();
+      y = 18;
+    };
+    const addWrapped = (text, x, width, options = {}) => {
+      doc.setFont('helvetica', options.bold ? 'bold' : 'normal');
+      doc.setFontSize(options.size || 10);
+      doc.setTextColor(options.color || '#263a35');
+      const lines = doc.splitTextToSize(pdfSafe(text), width);
+      ensureSpace(lines.length * (options.lineHeight || 5) + 2);
+      doc.text(lines, x, y);
+      y += lines.length * (options.lineHeight || 5);
+    };
+    const addContainedImage = (dataUrl, x, top, boxWidth, boxHeight) => {
+      const properties = doc.getImageProperties(dataUrl);
+      const scale = Math.min(boxWidth / properties.width, boxHeight / properties.height);
+      const width = properties.width * scale;
+      const height = properties.height * scale;
+      doc.addImage(dataUrl, 'JPEG', x + (boxWidth - width) / 2, top, width, height, undefined, 'FAST');
+    };
+
+    doc.setFillColor('#0b6b58');
+    doc.roundedRect(margin, y, usableWidth, 25, 3, 3, 'F');
+    doc.setTextColor('#ffffff');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    doc.text('Sentinela SST', margin + 7, y + 10);
+    doc.setFontSize(10);
+    doc.text('Relatório de inspeção de segurança do trabalho', margin + 7, y + 17);
+    y += 33;
+
+    addWrapped(`${inspection.code} - ${sector}`, margin, usableWidth, { bold: true, size: 15, lineHeight: 7 });
+    y += 2;
+    doc.setFillColor('#e8f2ee');
+    doc.roundedRect(margin, y, usableWidth, 19, 2, 2, 'F');
+    doc.setTextColor('#27554a');
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Data: ${fmtDate(inspection.inspection_date)}`, margin + 5, y + 7);
+    doc.text(`Setor: ${pdfSafe(sector)}`, margin + 5, y + 14);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Inspetor: ${pdfSafe(inspection.inspector_name)}`, pageWidth / 2, y + 7);
+    doc.text(`Itens: ${inspection.inspection_answers.length}`, pageWidth / 2, y + 14);
+    y += 27;
+
+    const answers = [...inspection.inspection_answers].sort((a, b) => a.created_at.localeCompare(b.created_at));
+    for (const [index, answer] of answers.entries()) {
+      const photos = [];
+      for (const path of answer.photo_paths || []) {
+        try { photos.push(await photoDataUrl(path)); } catch (error) { console.warn('Foto omitida do PDF:', error); }
+      }
+      const questionHeight = doc.splitTextToSize(pdfSafe(answer.question_snapshot), usableWidth - 4).length * 5;
+      const findingHeight = answer.finding ? doc.splitTextToSize(pdfSafe(`Apontamento: ${answer.finding}`), usableWidth - 4).length * 5 + 6 : 0;
+      ensureSpace(18 + questionHeight + findingHeight + (photos.length ? 57 : 0));
+      doc.setDrawColor('#cbdad5');
+      doc.setFillColor('#f8faf9');
+      doc.roundedRect(margin, y, usableWidth, 8, 2, 2, 'FD');
+      doc.setTextColor('#163029');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.text(`${index + 1}. ${pdfSafe(resultLabel[answer.result] || answer.result)}`, margin + 4, y + 5.5);
+      y += 13;
+      addWrapped(answer.question_snapshot, margin + 2, usableWidth - 4, { bold: true, size: 10 });
+      if (answer.finding) {
+        y += 1;
+        addWrapped(`Apontamento: ${answer.finding}`, margin + 2, usableWidth - 4, { size: 9.5 });
+        addWrapped(`Prioridade: ${answer.priority}`, margin + 2, usableWidth - 4, { size: 9 });
+      }
+
+      for (let photoIndex = 0; photoIndex < photos.length; photoIndex += 2) {
+        ensureSpace(58);
+        const width = (usableWidth - 5) / 2;
+        addContainedImage(photos[photoIndex], margin, y, width, 52);
+        if (photos[photoIndex + 1]) addContainedImage(photos[photoIndex + 1], margin + width + 5, y, width, 52);
+        y += 57;
+      }
+      y += 5;
+    }
+
+    const pageCount = doc.getNumberOfPages();
+    for (let page = 1; page <= pageCount; page += 1) {
+      doc.setPage(page);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor('#6c7d78');
+      doc.text(`Gerado pelo Sentinela SST - Página ${page} de ${pageCount}`, pageWidth / 2, pageHeight - 8, { align: 'center' });
+    }
+    doc.save(`inspecao-${inspection.code.toLowerCase()}.pdf`);
+    toast('PDF da inspeção gerado.');
+  } catch (error) {
+    console.error(error);
+    toast(`Não foi possível gerar o PDF: ${error.message}`, true);
+  } finally {
+    if (button) { button.disabled = false; button.textContent = 'Extrair PDF'; }
+  }
 }
 
 async function bootstrap() {
@@ -202,6 +354,10 @@ function fillSectorFilter() {
   $('#inspectionSectorFilter').value = current;
 }
 
+function canEditInspection(inspection) {
+  return state.profile.role === 'supervisor' || inspection.inspector_id === state.user.id;
+}
+
 function renderInspections() {
   fillSectorFilter();
   const query = $('#inspectionSearch').value.toLowerCase();
@@ -209,7 +365,7 @@ function renderInspections() {
   const rows = state.inspections.filter(inspection => (!filter || inspection.sector_id === filter) && (!query || [inspection.code, inspection.inspector_name, inspection.sectors?.name].join(' ').toLowerCase().includes(query)));
   $('#inspectionTable').innerHTML = rows.length ? `<table><thead><tr><th>Código</th><th>Data</th><th>Setor</th><th>Inspetor</th><th>Resultado</th><th>Ações geradas</th><th></th></tr></thead><tbody>${rows.map(inspection => {
     const problemCount = inspection.inspection_answers.filter(answer => answer.result !== 'conforme').length;
-    return `<tr><td><strong>${esc(inspection.code)}</strong></td><td>${fmtDate(inspection.inspection_date)}</td><td><span class="tag" style="border-left:4px solid ${inspection.sectors?.color || '#74847f'}">${esc(inspection.sectors?.name)}</span></td><td>${esc(inspection.inspector_name)}</td><td><span class="tag ${problemCount ? 'warn' : 'ok'}">${problemCount ? `${problemCount} apontamento(s)` : 'Conforme'}</span></td><td>${problemCount}</td><td><button class="btn small" data-view-inspection="${inspection.id}">Ver</button></td></tr>`;
+    return `<tr><td><strong>${esc(inspection.code)}</strong></td><td>${fmtDate(inspection.inspection_date)}</td><td><span class="tag" style="border-left:4px solid ${inspection.sectors?.color || '#74847f'}">${esc(inspection.sectors?.name)}</span></td><td>${esc(inspection.inspector_name)}</td><td><span class="tag ${problemCount ? 'warn' : 'ok'}">${problemCount ? `${problemCount} apontamento(s)` : 'Conforme'}</span></td><td>${problemCount}</td><td><div class="table-actions"><button class="btn small" data-view-inspection="${inspection.id}">Ver</button>${canEditInspection(inspection) ? `<button class="btn small" data-edit-inspection="${inspection.id}">Editar</button>` : ''}</div></td></tr>`;
   }).join('')}</tbody></table>` : empty('Nenhuma inspeção encontrada', 'Inicie uma inspeção para criar o primeiro registro.');
 }
 
@@ -294,6 +450,29 @@ async function openInspection(preselectedSectorId = '') {
   $('#inspectionForm').addEventListener('submit', saveInspection);
 }
 
+async function openEditInspection(inspection) {
+  if (!inspection || !canEditInspection(inspection)) return toast('Você não tem permissão para editar esta inspeção.', true);
+  const sector = sectorById(inspection.sector_id);
+  const orderedAnswers = [...inspection.inspection_answers].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const cards = await Promise.all(orderedAnswers.map(async (answer, index) => {
+    const issue = answer.result !== 'conforme';
+    const existingPhotos = await signedImages(answer.photo_paths);
+    return `<article class="check-item" data-answer-id="${answer.id}"><h4>${index + 1}. ${esc(answer.question_snapshot)}</h4><div class="status-options"><label><input type="radio" name="edit-result-${answer.id}" value="conforme" ${answer.result === 'conforme' ? 'checked' : ''}> Conforme</label><label><input type="radio" name="edit-result-${answer.id}" value="nao_conformidade" ${answer.result === 'nao_conformidade' ? 'checked' : ''}> Não conformidade</label><label><input type="radio" name="edit-result-${answer.id}" value="oportunidade" ${answer.result === 'oportunidade' ? 'checked' : ''}> Oportunidade</label></div><div class="issue-detail ${issue ? '' : 'hidden'}"><label class="field"><span>Descrição do apontamento</span><textarea class="finding" placeholder="Descreva a condição encontrada">${esc(answer.finding || '')}</textarea></label><div class="grid2"><label class="field"><span>Prioridade</span><select class="priority-select"><option value="alta" ${answer.priority === 'alta' ? 'selected' : ''}>Alta</option><option value="media" ${answer.priority === 'media' ? 'selected' : ''}>Média</option><option value="baixa" ${answer.priority === 'baixa' ? 'selected' : ''}>Baixa</option></select></label><label class="field"><span>Adicionar fotos (até 4)</span><input class="photo-input" type="file" accept="image/jpeg,image/png,image/webp" multiple></label></div>${existingPhotos ? `<div class="existing-photos"><span>Fotos já salvas</span><div class="thumbs">${existingPhotos}</div></div>` : ''}<div class="thumbs new-photo-previews"></div></div></article>`;
+  }));
+
+  modal(`<form id="inspectionForm"><div class="modal-head"><h2>Editar ${esc(inspection.code)}</h2><button type="button" class="icon-btn" data-close>×</button></div><div class="modal-body"><div class="grid2"><label class="field"><span>Setor</span><input value="${esc(sector.name)}" disabled></label><label class="field"><span>Data</span><input name="inspection_date" type="date" value="${esc(inspection.inspection_date)}" required></label></div><label class="field"><span>Inspetor</span><input name="inspector_name" value="${esc(inspection.inspector_name)}" required></label><div class="notice">Os itens e as fotos já salvas serão preservados. Novos apontamentos criarão ações 5W2H; ações existentes não serão excluídas automaticamente, garantindo rastreabilidade.</div>${cards.join('')}</div><div class="modal-foot"><button type="button" class="btn" data-close>Cancelar</button><button id="saveInspection" class="btn primary">Salvar alterações</button></div></form>`, true);
+
+  $$('.check-item', $('#inspectionForm')).forEach(card => {
+    $$('input[type=radio]', card).forEach(radio => radio.addEventListener('change', () => card.querySelector('.issue-detail').classList.toggle('hidden', radio.value === 'conforme')));
+    const input = $('.photo-input', card);
+    input.addEventListener('change', () => {
+      input._files = [...input.files].slice(0, 4);
+      $('.new-photo-previews', card).innerHTML = input._files.map(file => `<img class="thumb" src="${URL.createObjectURL(file)}" alt="Prévia da nova foto">`).join('');
+    });
+  });
+  $('#inspectionForm').addEventListener('submit', event => saveEditedInspection(event, inspection));
+}
+
 async function uploadInspectionPhotos(inspectionId, itemId, files) {
   const paths = [];
   for (const file of files) {
@@ -332,11 +511,58 @@ async function saveInspection(event) {
   } catch (error) { toast(`Não foi possível salvar: ${error.message}`, true); setBusy(false, true); button.disabled = false; button.textContent = 'Finalizar inspeção'; }
 }
 
+async function saveEditedInspection(event, inspection) {
+  event.preventDefault();
+  const cards = $$('.check-item', event.currentTarget);
+  for (const card of cards) {
+    const result = $('input[type=radio]:checked', card).value;
+    if (result !== 'conforme' && !$('.finding', card).value.trim()) return toast('Descreva todos os apontamentos.', true);
+  }
+
+  const button = $('#saveInspection');
+  button.disabled = true;
+  button.textContent = 'Salvando…';
+  setBusy(true);
+  try {
+    const form = Object.fromEntries(new FormData(event.currentTarget));
+    const answers = [];
+    for (const card of cards) {
+      const current = inspection.inspection_answers.find(answer => answer.id === card.dataset.answerId);
+      const result = $('input[type=radio]:checked', card).value;
+      const newPaths = await uploadInspectionPhotos(inspection.id, current.checklist_item_id || current.id, $('.photo-input', card)._files || []);
+      answers.push({
+        id: current.id,
+        result,
+        finding: result === 'conforme' ? null : $('.finding', card).value.trim(),
+        priority: result === 'conforme' ? 'media' : $('.priority-select', card).value,
+        photo_paths: [...(current.photo_paths || []), ...newPaths],
+      });
+    }
+    const { error } = await db.rpc('update_inspection', {
+      p_inspection_id: inspection.id,
+      p_inspection_date: form.inspection_date,
+      p_inspector_name: form.inspector_name.trim(),
+      p_answers: answers,
+    });
+    if (error) throw error;
+    closeModal();
+    await loadAll();
+    navigate('inspections');
+    toast('Inspeção atualizada sem remover as evidências existentes.');
+  } catch (error) {
+    toast(`Não foi possível atualizar: ${error.message}`, true);
+    setBusy(false, true);
+    button.disabled = false;
+    button.textContent = 'Salvar alterações';
+  }
+}
+
 async function viewInspection(id) {
   const inspection = state.inspections.find(item => item.id === id);
   if (!inspection) return;
-  const answers = await Promise.all(inspection.inspection_answers.map(async (answer, index) => `<article class="check-item"><h4>${index + 1}. ${esc(answer.question_snapshot)}</h4><span class="tag ${answer.result === 'conforme' ? 'ok' : answer.result === 'nao_conformidade' ? 'danger' : 'warn'}">${answer.result === 'conforme' ? 'Conforme' : typeLabel[answer.result]}</span>${answer.finding ? `<p>${esc(answer.finding)}</p>` : ''}<div class="thumbs">${await signedImages(answer.photo_paths)}</div></article>`));
-  modal(`<div class="modal-head"><h2>${esc(inspection.code)} · ${esc(inspection.sectors?.name)}</h2><button class="icon-btn" data-close>×</button></div><div class="modal-body"><p class="notice"><strong>${fmtDate(inspection.inspection_date)}</strong> · Inspetor: ${esc(inspection.inspector_name)}</p>${answers.join('')}</div><div class="modal-foot"><button class="btn" data-close>Fechar</button></div>`, true);
+  const orderedAnswers = [...inspection.inspection_answers].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const answers = await Promise.all(orderedAnswers.map(async (answer, index) => `<article class="check-item"><h4>${index + 1}. ${esc(answer.question_snapshot)}</h4><span class="tag ${answer.result === 'conforme' ? 'ok' : answer.result === 'nao_conformidade' ? 'danger' : 'warn'}">${resultLabel[answer.result]}</span>${answer.finding ? `<p>${esc(answer.finding)}</p><p class="muted"><strong>Prioridade:</strong> ${esc(answer.priority)}</p>` : ''}<div class="thumbs">${await signedImages(answer.photo_paths)}</div></article>`));
+  modal(`<div class="modal-head"><h2>${esc(inspection.code)} · ${esc(inspection.sectors?.name)}</h2><button class="icon-btn" data-close>×</button></div><div class="modal-body"><p class="notice"><strong>${fmtDate(inspection.inspection_date)}</strong> · Inspetor: ${esc(inspection.inspector_name)}</p>${answers.join('')}</div><div class="modal-foot">${canEditInspection(inspection) ? `<button class="btn" data-edit-inspection="${inspection.id}">Editar inspeção</button>` : ''}<button class="btn primary" data-export-inspection="${inspection.id}">Extrair PDF</button><button class="btn" data-close>Fechar</button></div>`, true);
 }
 
 async function openAction(action = null) {
@@ -411,8 +637,11 @@ function empty(title, text) { return `<div class="empty"><strong>${esc(title)}</
 
 $('#nav').addEventListener('click', event => { const button = event.target.closest('[data-page]'); if (button) navigate(button.dataset.page); });
 document.addEventListener('click', event => {
+  const image = event.target.closest('[data-lightbox-src]'); if (image) openLightbox(image.dataset.lightboxSrc, image.dataset.lightboxAlt);
   const page = event.target.closest('[data-page-link]'); if (page) navigate(page.dataset.pageLink);
   const inspection = event.target.closest('[data-view-inspection]'); if (inspection) viewInspection(inspection.dataset.viewInspection);
+  const editInspection = event.target.closest('[data-edit-inspection]'); if (editInspection) openEditInspection(state.inspections.find(item => item.id === editInspection.dataset.editInspection));
+  const exportInspection = event.target.closest('[data-export-inspection]'); if (exportInspection) exportInspectionPdf(exportInspection.dataset.exportInspection);
   const action = event.target.closest('[data-edit-action]'); if (action) openAction(state.actions.find(item => item.id === action.dataset.editAction));
   const sector = event.target.closest('[data-edit-sector]'); if (sector) openSector(sectorById(sector.dataset.editSector));
   const inspect = event.target.closest('[data-inspect-sector]'); if (inspect) openInspection(inspect.dataset.inspectSector);
